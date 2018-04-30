@@ -10,6 +10,8 @@ public:
 int main() {
 	{
 		alloc::SmartSimpleAllocator<A> smartStringAllocator;
+		alloc::SmartSimpleAllocator<A>::unique_t unique = smartStringAllocator.allocate();
+
 		auto ptr = smartStringAllocator.allocate();
 		{
 			auto ptr2 = smartStringAllocator.allocate();

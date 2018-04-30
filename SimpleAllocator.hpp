@@ -8,10 +8,11 @@
 #include <memory>
 
 namespace alloc {
-	template <class T, int BucketSize = 64 * 1024 * 1024>
+	template <class T, int BucketSize = 64 * 1024>
 	class SimpleAllocatorSized {
 		std::vector<std::vector<char>> bucketList;
 		std::vector<T*> deallocated;
+		bool autoFree = false;
 
 		bool isWithinFromSelf(char* ptr) {
 			static auto isWithin = [](auto ptr, auto check, int size) {
@@ -31,6 +32,12 @@ namespace alloc {
 
 			return false;
 		}
+
+		auto& addBucket() {
+			auto& fittingBucket = bucketList.emplace_back();
+			fittingBucket.reserve(BucketSize);
+			return fittingBucket;
+		}
 	public:
 		using byte_t = char;
 
@@ -42,26 +49,20 @@ namespace alloc {
 			if (deallocated.size()) {
 				byte_t* byte = (byte_t*)deallocated.back();
 				deallocated.pop_back();
+				if (deallocated.size() * 2 <= deallocated.capacity() && autoFree)
+					deallocated.shrink_to_fit();
+
 				return byte;
 			}
 
-			static auto findBucket = [](int allocSize, auto& bucketList) -> auto& {
-				for (auto& bucket : bucketList) {
-					if (bucket.size() + allocSize <= bucket.capacity())
-						return bucket;
-				}
-
-				auto& bucket = bucketList.emplace_back();
-				bucket.reserve(BucketSize);
-				return bucket;
-			};
-
 			constexpr size_t size = sizeof(T);
-			auto& fittingBucket = findBucket(size, bucketList);
+			auto& fittingBucket = bucketList.back();
+
+			if (fittingBucket.size() + size > fittingBucket.capacity())
+				fittingBucket = addBucket();
 
 			size_t position = fittingBucket.size();
 			fittingBucket.resize(position + size);
-
 			return &fittingBucket[position];
 		}
 
@@ -77,30 +78,44 @@ namespace alloc {
 			deallocated.push_back(ptr);
 			ptr->~T();
 		}
+
+		void freeUnusedMemory() {
+			deallocated.shrink_to_fit();
+		}
+
+		void setAutoFree(bool set) {
+			autoFree = set;
+		}
 	};
 
-	template <class T, int BucketSize = 64 * 1024 * 1024>
+	template <class T, int BucketSize = 64 * 1024>
 	class SmartSimpleAllocatorSized {
-		SimpleAllocatorSized<T> innerAllocator;
+		using innerAllocator_t = SimpleAllocatorSized<T, BucketSize>;
+		innerAllocator_t innerAllocator;
 
-		auto toUniquePointer(T* ptr) {
-			static auto lambda = [&](T* t) { innerAllocator.deallocate(t); };
+		template <class Allocator>
+		static auto toUniquePointer(T* ptr, Allocator& innerAlloc) {
+			auto lambda = [&](T* t) { innerAlloc.deallocate(t); };
 			return std::unique_ptr<T, decltype(lambda)>{ ptr, lambda };
 		}
 
-		auto toSharedPointer(T* ptr) {
-			static auto lambda = [&](T* t) { innerAllocator.deallocate(t); };
+		template <class Allocator>
+		static auto toSharedPointer(T* ptr, Allocator& innerAlloc) {
+			auto lambda = [&](T* t) { innerAlloc.deallocate(t); };
 			return std::shared_ptr<T>{ ptr, lambda };
 		}
 	public:
+		using unique_t = decltype(toUniquePointer(std::declval<T*>(), std::declval<innerAllocator_t&>()));
+		using shared_t = std::shared_ptr<T>;
+
 		template <class... Args>
 		auto allocate(Args&&... constructorArgs) {
-			return toUniquePointer(innerAllocator.allocate(std::forward<Args>(constructorArgs)...));
+			return toUniquePointer(innerAllocator.allocate(std::forward<Args>(constructorArgs)...), innerAllocator);
 		}
 
 		template <class... Args>
 		auto allocateShared(Args&&... constructorArgs) {
-			return toSharedPointer(innerAllocator.allocate(std::forward<Args>(constructorArgs)...));
+			return toSharedPointer(innerAllocator.allocate(std::forward<Args>(constructorArgs)...), innerAllocator);
 		}
 	};
 
