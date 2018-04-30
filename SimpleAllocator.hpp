@@ -65,13 +65,9 @@ namespace alloc {
 			return &fittingBucket[position];
 		}
 
-		T* allocate() {
-			return new (getMemory()) T();
-		}
-
 		template <class... Args>
 		T* allocate(Args&&... constructorArgs) {
-			return new (getMemory()) T(constructorArgs...);
+			return new (getMemory()) T(std::forward<Args>(constructorArgs)...);
 		}
 
 		void deallocate(T* ptr) {
@@ -83,8 +79,8 @@ namespace alloc {
 		}
 	};
 
-	template <class T>
-	class SmartSimpleAllocator {
+	template <class T, int BucketSize = 64 * 1024 * 1024>
+	class SmartSimpleAllocatorSized {
 		SimpleAllocatorSized<T> innerAllocator;
 
 		auto toUniquePointer(T* ptr) {
@@ -107,6 +103,9 @@ namespace alloc {
 			return toSharedPointer(innerAllocator.allocate(std::forward<Args>(constructorArgs)...));
 		}
 	};
+
+	template <class T>
+	using SmartSimpleAllocator = SmartSimpleAllocatorSized<T>;
 
 	template <class T>
 	using SimpleAllocator = SimpleAllocatorSized<T>;
